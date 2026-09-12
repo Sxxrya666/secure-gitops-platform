@@ -1,0 +1,5 @@
+---
+argocd_namespace: argocd
+argocd_chart_version: "10.2.2"
+custom_domain_enabled: false
+argocd_domain: "argocd.example.com"

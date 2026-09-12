@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-policies
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/h1zardian/devsecops-pipeline-project.git
+    targetRevision: main
+    path: k8s/policies
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      managedFieldsManagers:
+        - kyverno
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

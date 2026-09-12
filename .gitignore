@@ -1,0 +1,57 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.auto.tfvars
+local.tfvars
+infra/terraform/environments/*.tfvars
+!*.tfvars.example
+# Child modules are validated in isolation locally, but only the root module's
+# provider lock file is used by the real Terraform runtime.
+infra/terraform/modules/**/.terraform.lock.hcl
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media
+
+# OS & IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.local
+local-notes.md
+
+# Helm dependency archives (rebuild from Chart.lock)
+**/charts/

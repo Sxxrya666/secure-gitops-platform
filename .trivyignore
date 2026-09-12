@@ -1,0 +1,2 @@
+# No blanket vulnerability suppressions.
+# Add an exception only after documenting its owner, rationale, and expiry date.

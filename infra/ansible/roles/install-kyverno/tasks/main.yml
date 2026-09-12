@@ -1,0 +1,23 @@
+---
+- name: Configure Kyverno Helm repository
+  kubernetes.core.helm_repository:
+    name: kyverno
+    repo_url: https://kyverno.github.io/kyverno/
+    force_update: true
+
+- name: Create kyverno namespace
+  kubernetes.core.k8s:
+    name: "{{ kyverno_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Deploy Kyverno Admission Controller via Helm
+  kubernetes.core.helm:
+    name: kyverno
+    chart_ref: kyverno/kyverno
+    chart_version: "{{ kyverno_chart_version }}"
+    release_namespace: "{{ kyverno_namespace }}"
+    state: present
+    wait: true
+    wait_timeout: "5m0s"

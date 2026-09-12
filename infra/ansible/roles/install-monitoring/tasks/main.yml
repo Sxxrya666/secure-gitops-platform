@@ -1,0 +1,24 @@
+---
+- name: Configure Prometheus Community Helm repository
+  kubernetes.core.helm_repository:
+    name: prometheus-community
+    repo_url: https://prometheus-community.github.io/helm-charts
+    force_update: true
+
+- name: Create monitoring namespace
+  kubernetes.core.k8s:
+    name: "{{ monitoring_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Deploy kube-prometheus-stack via Helm
+  kubernetes.core.helm:
+    name: kube-prometheus-stack
+    chart_ref: prometheus-community/kube-prometheus-stack
+    chart_version: "{{ monitoring_chart_version }}"
+    release_namespace: "{{ monitoring_namespace }}"
+    values: "{{ lookup('template', 'prometheus-values.yaml.j2') | from_yaml }}"
+    state: present
+    wait: true
+    wait_timeout: "5m0s"

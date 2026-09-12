@@ -1,0 +1,27 @@
+grafana:
+  enabled: true
+  service:
+    type: {{ 'ClusterIP' if grafana_custom_domain_enabled | bool else 'LoadBalancer' }}
+  ingress:
+    enabled: {{ grafana_custom_domain_enabled | bool | lower }}
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    hosts:
+      - "{{ grafana_host }}"
+    path: /
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - "{{ grafana_host }}"
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false

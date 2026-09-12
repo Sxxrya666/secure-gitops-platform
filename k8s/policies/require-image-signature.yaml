@@ -1,0 +1,37 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-image-signature
+  annotations:
+    policies.kyverno.io/title: Require Cosign Image Signature
+    policies.kyverno.io/category: Supply Chain Security
+spec:
+  admission: true
+  validationFailureAction: Enforce
+  background: false
+  emitWarning: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: verify-cosign-signature
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [django]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/h1zardian/devsecops-pipeline-project:*"
+            - "ghcr.io/h1zardian/devsecops-pipeline-project@sha256:*"
+          mutateDigest: true
+          required: true
+          useCache: true
+          verifyDigest: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subject: "https://github.com/h1zardian/devsecops-pipeline-project/.github/workflows/ci-app.yml@refs/heads/main"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
+                  signatureAlgorithm: sha256

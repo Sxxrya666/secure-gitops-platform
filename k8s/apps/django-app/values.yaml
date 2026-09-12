@@ -1,0 +1,53 @@
+replicaCount: 2
+
+awsRegion: "ap-south-1"
+
+image:
+  repository: "ghcr.io/h1zardian/devsecops-pipeline-project"
+  pullPolicy: Always
+  tag: "sha-6f65f44"
+  digest: "sha256:7c465589161846dcf835356b903ec6d0e07c761b4d35e2465e239475c0beb88f"
+
+sqlHost: "devsecops-postgres-dev.cmksk3juhzgm.ap-south-1.rds.amazonaws.com"
+allowedHosts: "*"
+
+externalSecrets:
+  enabled: true
+  environment: "dev"
+  secretKey: ""
+  postgresPassword: ""
+
+gitOps:
+  # Argo CD uses sync waves to run migrations after configuration/secrets exist
+  # and before the Deployment rolls out. Disable only for direct Helm installs.
+  enabled: true
+
+serviceAccount:
+  create: true
+  name: django-sa
+  annotations: {}
+
+# Default: an internet-facing AWS load balancer with an AWS-generated hostname.
+# For a custom HTTPS domain, change this to ClusterIP and enable ingress below.
+service:
+  type: LoadBalancer
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: traefik
+  host: app.example.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80

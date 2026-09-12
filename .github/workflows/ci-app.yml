@@ -1,0 +1,200 @@
+name: App CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'app/**'
+      - '.github/workflows/ci-app.yml'
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  security-scans:
+    name: Security & Test Gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Application Dependencies
+        run: python -m pip install --disable-pip-version-check --requirement app/requirements.txt
+
+      - name: Django Smoke Tests
+        working-directory: app
+        env:
+          SQL_ENGINE: django.db.backends.sqlite3
+          POSTGRES_DB: /tmp/devsecops-test.sqlite3
+        run: python manage.py test hospital.tests --verbosity 2
+
+      - name: Bandit SAST Scan
+        run: |
+          python -m pip install --disable-pip-version-check bandit==1.9.4 pip-audit==2.10.1
+          bandit -r app/ -x app/console/settings.py
+
+      - name: Python Dependency Vulnerability Gate
+        run: pip-audit --requirement app/requirements.txt --strict
+
+  build-scan-push:
+    name: Build, Scan, Push & Sign Container
+    needs: security-scans
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      image-digest: ${{ steps.push-image.outputs.digest }}
+      image-tag: ${{ steps.prep.outputs.tag }}
+      base-image: ${{ steps.prep.outputs.base_image }}
+      image-name: ${{ steps.prep.outputs.full_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Prepare Image Tag & Metadata
+        id: prep
+        run: |
+          TAG="sha-${GITHUB_SHA::7}"
+          REPO_LOWER=$(printf '%s' "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "tag=${TAG}"
+            echo "base_image=${REPO_LOWER}"
+            echo "full_image=${REPO_LOWER}:${TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Buildah
+        run: sudo apt-get update && sudo apt-get install -y buildah
+
+      - name: Build Image via Buildah (Local)
+        run: |
+          buildah build -t "${{ steps.prep.outputs.full_image }}" ./app
+          buildah push "${{ steps.prep.outputs.full_image }}" docker-archive:django-app.tar
+
+      - name: Trivy Vulnerability Scan (Pre-Push Gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: 'django-app.tar'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+          trivyignores: '.trivyignore'
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Image to GHCR
+        id: push-image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          buildah push --digestfile /tmp/digest.txt --authfile ~/.docker/config.json "${{ steps.prep.outputs.full_image }}"
+          DIGEST=$(cat /tmp/digest.txt)
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Kyverno 1.18 verifies the legacy OCI signature attachment emitted
+          # by Cosign 2.x; Cosign 3's bundle format is not discovered yet.
+          cosign-release: v2.6.4
+
+      - name: Install Syft
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Generate & Attest SBOM (Syft CycloneDX)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          syft docker-archive:django-app.tar -o cyclonedx-json=sbom.cyclonedx.json
+          IMAGE_REF="${{ steps.prep.outputs.base_image }}@${{ steps.push-image.outputs.digest }}"
+          cosign attest --yes --predicate sbom.cyclonedx.json --type cyclonedx "$IMAGE_REF"
+
+      - name: Cosign Keyless Image Signing
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          IMAGE_REF="${{ steps.prep.outputs.base_image }}@${{ steps.push-image.outputs.digest }}"
+          cosign sign --yes "$IMAGE_REF"
+
+  provenance:
+    name: Build Provenance Attestation
+    needs: build-scan-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      id-token: write
+      packages: write
+      contents: read
+    steps:
+      - name: Log in to GHCR for attestation publication
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate and publish build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ${{ needs.build-scan-push.outputs.base-image }}
+          subject-digest: ${{ needs.build-scan-push.outputs.image-digest }}
+          push-to-registry: true
+
+  update-gitops:
+    name: Update GitOps Repository
+    needs: [build-scan-push, provenance]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Publish the GitOps handoff as the application deployment. This keeps the
+    # Deployments view aligned with the workload instead of Terraform applies.
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # A single-repository deploy key is the only ruleset bypass actor.
+          # Forks without branch protection fall back to GITHUB_TOKEN when this
+          # optional secret is unset.
+          ssh-key: ${{ secrets.GITOPS_DEPLOY_KEY }}
+
+      - name: Update Helm Image Repository & Tag
+        run: |
+          sed -i 's|repository: .*|repository: "${{ needs.build-scan-push.outputs.base-image }}"|' k8s/apps/django-app/values.yaml
+          sed -i 's|tag: .*|tag: "${{ needs.build-scan-push.outputs.image-tag }}"|' k8s/apps/django-app/values.yaml
+          sed -i 's|digest: .*|digest: "${{ needs.build-scan-push.outputs.image-digest }}"|' k8s/apps/django-app/values.yaml
+
+      - name: Commit & Push New Image Tag
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/apps/django-app/values.yaml
+          git commit -m "chore(gitops): update django-app image tag to ${{ needs.build-scan-push.outputs.image-tag }}" || exit 0
+          git push

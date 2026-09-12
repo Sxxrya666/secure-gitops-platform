@@ -1,0 +1,3 @@
+---
+ingress_namespace: traefik
+ingress_chart_version: "41.1.0"

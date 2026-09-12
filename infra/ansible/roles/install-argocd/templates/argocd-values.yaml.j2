@@ -1,0 +1,25 @@
+{% if custom_domain_enabled | bool %}
+global:
+  domain: "{{ argocd_domain }}"
+{% endif %}
+
+server:
+  extraArgs:
+    - --insecure
+  config:
+    application.instanceLabelKey: argocd.argoproj.io/instance
+  service:
+    type: {{ 'ClusterIP' if custom_domain_enabled | bool else 'LoadBalancer' }}
+  ingress:
+    enabled: {{ custom_domain_enabled | bool | lower }}
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    hostname: "{{ argocd_domain }}"
+    path: /
+    tls: true
+
+configs:
+  params:
+    server.insecure: true
